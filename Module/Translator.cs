@@ -125,6 +125,8 @@ namespace Dreamnation
 
         public void Translate (IClientAPI client, string srclc, string dstlc, string message, ITranslatorModuleFinished finished)
         {
+            message = message.Trim ();
+
             // key for the translations dictionary
             string key = srclc + ":" + dstlc + ":" + message;
 
@@ -166,6 +168,9 @@ namespace Dreamnation
 
         ///////////////////////////////////////////////////////
 
+        /**
+         * @brief One of these per message being translated.
+         */
         private class Translation {
             public string srclc;
             public string dstlc;
@@ -181,6 +186,15 @@ namespace Dreamnation
             }
         }
 
+        /**
+         * @brief One of these in the whole process.
+         *        It takes pending translations from translationq,
+         *        translates the message, saves the translation,
+         *        then calls all the Finished events.
+         *        The translation remains in the translations
+         *        dictionary in case the translation is needed
+         *        again.
+         */
         private static void TranslatorThread ()
         {
             Monitor.Enter (queuelock);
@@ -207,7 +221,7 @@ namespace Dreamnation
                         xlation = null;
                     }
 
-                    // original text with language code if fails
+                    // original text with language code if translation failed
                     if (xlation == null) {
                         xlation = "[[[" + val.srclc + "]]]" + val.message;
                     }
@@ -240,19 +254,18 @@ namespace Dreamnation
         {
             /* ----------------------------------------------------------------------------------------- */
 
-            /* - just sends the string back all concatted with language codes for testing
+            // Sends the request to Google
             string query = "s=" + HttpUtility.UrlEncode (srclc) +
                           "&d=" + HttpUtility.UrlEncode (dstlc) +
                           "&m=" + HttpUtility.UrlEncode (message);
             return SynchronousHttpRequester.MakeRequest (
                 "POST",
-                "http://toutatis.nii.net/scripts/translator.php",
+                "http://world.dreamnation.net/GoogleTranslate.php",
                 "application/x-www-form-urlencoded",
                 query,
                 WD_TIMEOUT_MS / 2000,
                 null
             );
-            */
 
             /* ----------------------------------------------------------------------------------------- */
 
@@ -279,6 +292,7 @@ namespace Dreamnation
 
             /* ----------------------------------------------------------------------------------------- */
 
+            /* works but kinda slow...
             // http://mymemory.translated.net/doc/spec.php
             string obj = "q=" + HttpUtility.UrlEncode (message) +
                         "&langpair=" + HttpUtility.UrlEncode (srclc) + "|" + HttpUtility.UrlEncode (dstlc) +
@@ -311,6 +325,7 @@ namespace Dreamnation
                 }
             }
             return json;
+            */
         }
     }
 }
