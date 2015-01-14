@@ -1,0 +1,44 @@
+<Project name="Translator" path="addon-modules/Translator/Module" type="Library">
+    <Configuration name="Debug">
+        <Options>
+            <OutputPath>../../../bin/</OutputPath>
+        </Options>
+    </Configuration>
+    <Configuration name="Release">
+        <Options>
+            <OutputPath>../../../bin/</OutputPath>
+        </Options>
+    </Configuration>
+
+    <ReferencePath>../../../bin/</ReferencePath>
+    <Reference name="hdfsdll"/>
+    <Reference name="log4net"/>
+    <Reference name="Mono.Addins"/>
+    <Reference name="MySql.Data"/>
+    <Reference name="Nini"/>
+    <Reference name="OpenMetaverse"/>
+    <Reference name="OpenMetaverse.StructuredData"/>
+    <Reference name="OpenMetaverseTypes"/>
+    <Reference name="OpenSim"/>
+    <Reference name="OpenSim.Data"/>
+    <Reference name="OpenSim.Data.MySQL"/>
+    <Reference name="OpenSim.Framework"/>
+    <Reference name="OpenSim.Framework.Console"/>
+    <Reference name="OpenSim.Framework.Monitoring"/>
+    <Reference name="OpenSim.Framework.Servers"/>
+    <Reference name="OpenSim.Framework.Servers.HttpServer"/>
+    <Reference name="OpenSim.Region.Framework"/>
+    <Reference name="OpenSim.Server.Base"/>
+    <Reference name="OpenSim.Services.Base"/>
+    <Reference name="OpenSim.Services.Connectors"/>
+    <Reference name="OpenSim.Services.Interfaces"/>
+    <Reference name="System"/>
+    <Reference name="System.Core"/>
+    <Reference name="System.Data"/>
+    <Reference name="System.Web"/>
+    <Reference name="XMLRPC"/>
+
+    <Files>
+        <Match pattern="*.cs" recurse="true"/>
+    </Files>
+</Project>
