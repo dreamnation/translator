@@ -11,6 +11,8 @@ using OpenSim.Framework.Monitoring;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 
+using LSL_String = OpenSim.Region.ScriptEngine.Shared.LSL_Types.LSLString;
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,7 +33,30 @@ namespace Dreamnation
         private static readonly ILog m_log =
                 LogManager.GetLogger (MethodBase.GetCurrentMethod ().DeclaringType);
 
-        private const int WD_TIMEOUT_MS = 60000;
+        private const int    WD_TIMEOUT_MS    = 60000;
+        private const int    PUBLIC_CHANNEL   = 0;  // from scripts
+        private const string DEFAULT_LANGCODE = "en";
+        private const string DISABLE_LANGCODE = "off";
+        private const string NOTRANS_LANGCODE = "--";
+
+        // names come from top of translate.google.com page
+        // 2-letter codes come from http://www.loc.gov/standards/iso639-2/php/code_list.php
+        // hopefully they actually match
+        private static string[] allLangCodes = new string[] {
+            "af Afrikaans",  "sq Albanian",   "ar Arabic",     "hy Armenian",  "az Azerbaijani", "eu Basque",    "be Belarusian", 
+            "bn Bengali",    "bs Bosnian",    "bg Bulgarian",  "ca Catalan",   /*"Cebuano",*/    "ny Chichewa",  "zh Chinese", 
+            "hr Croatian",   "cs Czech",      "da Danish",     "nl Dutch",     "en English",     "eo Esperanto", "et Estonian", 
+            /*"Filipino",*/  "fi Finnish",    "fr French",     "gl Galician",  "ka Georgian",    "de German",    "el Greek", 
+            "gu Gujarati",   "ht Haitian",    "ha Hausa",      "he Hebrew",    "hi Hindi",       /*"Hmong",*/    "hu Hungarian", 
+            "is Icelandic",  "ig Igbo",       "id Indonesian", "ga Irish",     "it Italian",     "ja Japanese",  "jv Javanese", 
+            "kn Kannada",    "kk Kazakh",     "km Khmer",      "ko Korean",    "lo Lao",         "la Latin",     "lv Latvian", 
+            "lt Lithuanian", "mk Macedonian", "mg Malagasy",   "ms Malay",     "ml Malayalam",   "mt Maltese",   "mi Maori", 
+            "mr Marathi",    "mn Mongolian",  "my Myanmar",    "ne Nepali",    "no Norwegian",   "fa Persian",   "pl Polish", 
+            "pt Portuguese", "pa Punjabi",    "ro Romanian",   "ru Russian",   "sr Serbian",     /*"Sesotho",*/  "si Sinhala", 
+            "sk Slovak",     "sl Slovenian",  "so Somali",     "es Spanish",   "su Sundanese",   "sw Swahili",   "sv Swedish", 
+            "tg Tajik",      "ta Tamil",      "te Telugu",     "th Thai",      "tr Turkish",     "uk Ukrainian", "ur Urdu", 
+            "uz Uzbek",      "vi Vietnamese", "cy Welsh",      "yi Yiddish",   "yo Yoruba",      "zu Zulu"
+        };
 
         private static bool runthread;
         private static Dictionary<string,Translation> translations = new Dictionary<string,Translation> ();
@@ -87,7 +112,8 @@ namespace Dreamnation
             }
         }
 
-        public void RegionLoaded (Scene scene) { }
+        public void RegionLoaded (Scene scene)
+        { }
 
         public void RemoveRegion (Scene scene)
         {
@@ -109,7 +135,10 @@ namespace Dreamnation
             get { return "Translator"; }
         }
 
-        public Type ReplaceableInterface { get { return null; } }
+        public Type ReplaceableInterface
+        {
+            get { return null; }
+        }
 
         /**
          * @brief A client connection was opened, set up context to handle message translations.
@@ -311,11 +340,6 @@ namespace Dreamnation
          * @brief One of these per client connected to the sim.
          */
         private class TranslatorClient : ITranslatorClient {
-            private const int    PUBLIC_CHANNEL   = 0;  // from scripts
-            private const string DEFAULT_LANGCODE = "en";
-            private const string DISABLE_LANGCODE = "off";
-            private const string NOTRANS_LANGCODE = "--";
-
             private IClientAPI client;
             private string langcode;
             private TranslatorModule module;
@@ -324,10 +348,41 @@ namespace Dreamnation
             {
                 module = mod;
                 client = cli;
+                langcode = DEFAULT_LANGCODE;
             }
 
             public void ClientClosed ()
             { }
+
+            /**
+             * @brief A script called osTranslatorControl().
+             */
+            public object[] ScriptControl (string cmd, object[] args)
+            {
+                int nargs = args.Length;
+                switch (cmd) {
+                    case "getdeflangcode": {
+                        return new object[] { new LSL_String (DEFAULT_LANGCODE) };
+                    }
+                    case "getalllangcodes": {
+                        int ncod = allLangCodes.Length;
+                        object[] rets = new object[ncod];
+                        for (int i = 0; i < ncod; i ++) {
+                            rets[i] = new LSL_String (allLangCodes[i]);
+                        }
+                        return rets;
+                    }
+                    case "getlangcode": {
+                        return new object[] { new LSL_String (langcode) };
+                    }
+                    case "setlangcode": {
+                        if (nargs < 1) break;
+                        bool ok = SetLanguageCode (args[0].ToString ());
+                        return new object[] { new LSL_String (ok ? "OK" : "badlangcode") };
+                    }
+                }
+                return new object[0];
+            }
 
             /**
              * @Brief Message from client to chat or IM.
@@ -353,15 +408,14 @@ namespace Dreamnation
                     if (newlc == NOTRANS_LANGCODE) {
                         reply = "pass-through mode";
                         langcode = newlc;
-                    } else if (ValidLanguageCode (newlc)) {
+                    } else if (SetLanguageCode (newlc)) {
                         reply = "language code set to " + newlc;
-                        langcode = newlc;
                     } else {
                         reply = "unknown language code " + newlc;
                     }
 
-                    // echo acknowledgement back to client without translation
-                    client.SendChatMessage ("[[[" + NOTRANS_LANGCODE + "]]]" + reply,
+                    // echo acknowledgement back to client
+                    client.SendChatMessage (reply,
                             (byte) ChatTypeEnum.Owner, Vector3.Zero, "Translator", UUID.Zero,
                             UUID.Zero, (byte) ChatSourceType.System, (byte) ChatAudibleLevel.Fully);
 
@@ -371,7 +425,6 @@ namespace Dreamnation
 
                     // otherwise, if no explicit [[[lc]]] prefix, put in the client's current langcode setting
                     if ((i != 0) || (j < 0)) {
-                        if (langcode == null) langcode = DEFAULT_LANGCODE;
                         message = "[[[" + langcode + "]]]" + message;
                     }
                     finished (message);
@@ -383,10 +436,6 @@ namespace Dreamnation
              */
             public void WhatevToClient (ITranslatorFinished finished, string message)
             {
-                if (langcode == null) {
-                    langcode = DEFAULT_LANGCODE;
-                }
-
                 // see if message coming from sim has a language tag on it
                 // [[[languagecode]]]
                 // if not, put the default code on it
@@ -420,9 +469,21 @@ namespace Dreamnation
             /**
              * @brief Client requesting the given language code, see if it is valid.
              */
-            private bool ValidLanguageCode (string lc)
+            private bool SetLanguageCode (string lc)
             {
-                return true;
+                string lclo = lc.ToLowerInvariant ();
+                foreach (string alc in allLangCodes) {
+                    string alclo = alc.ToLowerInvariant ();
+                    if (alclo.StartsWith (lclo + " ")) {
+                        langcode = lclo;
+                        return true;
+                    }
+                    if (alclo.EndsWith (" " + lclo)) {
+                        langcode = alclo.Substring (0, alclo.IndexOf (' '));
+                        return true;
+                    }
+                }
+                return false;
             }
         }
 
