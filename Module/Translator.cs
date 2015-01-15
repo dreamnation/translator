@@ -26,7 +26,7 @@ namespace Dreamnation
 {
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "Translator")]
 
-    public class Translator : INonSharedRegionModule, ITranslatorModule
+    public class TranslatorModule : INonSharedRegionModule, ITranslatorModule
     {
         private static readonly ILog m_log =
                 LogManager.GetLogger (MethodBase.GetCurrentMethod ().DeclaringType);
@@ -74,8 +74,7 @@ namespace Dreamnation
         }
 
         public void PostInitialise ()
-        {
-        }
+        { }
 
         public void AddRegion (Scene scene)
         {
@@ -97,15 +96,13 @@ namespace Dreamnation
                 if (-- numregions == 0) {
                     runthread = false;
                     Monitor.PulseAll (queuelock);
-                    mythread.Join ();
                     mythread = null;
                 }
             }
         }
 
         public void Close ()
-        {
-        }
+        { }
 
         public string Name
         {
@@ -114,16 +111,18 @@ namespace Dreamnation
 
         public Type ReplaceableInterface { get { return null; } }
 
-        ///////////////////////////////////////////////////////
-
-        public string DefaultLanguageCode { get { return "en"; } }
-
-        public bool ValidLanguageCode (IClientAPI client, string lc)
+        /**
+         * @brief A client connection was opened, set up context to handle message translations.
+         */
+        public ITranslatorClient ClientOpened (IClientAPI client)
         {
-            return true;
+            return new TranslatorClient (this, client);
         }
 
-        public void Translate (IClientAPI client, string srclc, string dstlc, string message, ITranslatorModuleFinished finished)
+        /**
+         * @brief Start translating the message, call finished when done.
+         */
+        private static void Translate (string srclc, string dstlc, string message, ITranslatorFinished finished)
         {
             message = message.Trim ();
 
@@ -160,29 +159,9 @@ namespace Dreamnation
                 }
             }
 
-            // if translation completed, call 'finished' right now
+            // if translation completed, call finished right now
             if (translated != null) {
                 finished (translated);
-            }
-        }
-
-        ///////////////////////////////////////////////////////
-
-        /**
-         * @brief One of these per message being translated.
-         */
-        private class Translation {
-            public string srclc;
-            public string dstlc;
-            public string message;
-            public string translated;
-
-            public event ITranslatorModuleFinished onFinished;
-            public ITranslatorModuleFinished GetFinisheds ()
-            {
-                ITranslatorModuleFinished finisheds = onFinished;
-                onFinished = null;
-                return finisheds;
             }
         }
 
@@ -232,7 +211,7 @@ namespace Dreamnation
 
                     // see if anything was waiting for the translation to complete
                     // if so, clear out the list and call them while unlocked
-                    ITranslatorModuleFinished finisheds = val.GetFinisheds ();
+                    ITranslatorFinished finisheds = val.GetFinisheds ();
                     if (finisheds != null) {
                         Monitor.Exit (queuelock);
                         finisheds (xlation);
@@ -326,6 +305,143 @@ namespace Dreamnation
             }
             return json;
             */
+        }
+
+        /**
+         * @brief One of these per client connected to the sim.
+         */
+        private class TranslatorClient : ITranslatorClient {
+            private const int    PUBLIC_CHANNEL   = 0;  // from scripts
+            private const string DEFAULT_LANGCODE = "en";
+            private const string DISABLE_LANGCODE = "off";
+            private const string NOTRANS_LANGCODE = "--";
+
+            private IClientAPI client;
+            private string langcode;
+            private TranslatorModule module;
+
+            public TranslatorClient (TranslatorModule mod, IClientAPI cli)
+            {
+                module = mod;
+                client = cli;
+            }
+
+            public void ClientClosed ()
+            { }
+
+            /**
+             * @Brief Message from client to chat or IM.
+             */
+            public void ClientToWhatev (ITranslatorFinished finished, string message, int channel)
+            {
+                // don't translate message headed for scripts
+                // it's probably something like a button from a menu
+                if (channel != PUBLIC_CHANNEL) {
+                    finished (message);
+                    return;
+                }
+
+                int i = message.IndexOf ("[[[");
+                int j = message.IndexOf ("]]]");
+
+                // translator commands begin with [[[ and end with ]]]
+                if ((i == 0) && (j == message.Length - 3)) {
+                    string newlc = message.Substring (3, message.Length - 6).ToLowerInvariant ();
+                    if (newlc == DISABLE_LANGCODE) newlc = DEFAULT_LANGCODE;
+
+                    string reply;
+                    if (newlc == NOTRANS_LANGCODE) {
+                        reply = "pass-through mode";
+                        langcode = newlc;
+                    } else if (ValidLanguageCode (newlc)) {
+                        reply = "language code set to " + newlc;
+                        langcode = newlc;
+                    } else {
+                        reply = "unknown language code " + newlc;
+                    }
+
+                    // echo acknowledgement back to client without translation
+                    client.SendChatMessage ("[[[" + NOTRANS_LANGCODE + "]]]" + reply,
+                            (byte) ChatTypeEnum.Owner, Vector3.Zero, "Translator", UUID.Zero,
+                            UUID.Zero, (byte) ChatSourceType.System, (byte) ChatAudibleLevel.Fully);
+
+                    // don't pass the message into the sim for further processing
+                    finished (null);
+                } else {
+
+                    // otherwise, if no explicit [[[lc]]] prefix, put in the client's current langcode setting
+                    if ((i != 0) || (j < 0)) {
+                        if (langcode == null) langcode = DEFAULT_LANGCODE;
+                        message = "[[[" + langcode + "]]]" + message;
+                    }
+                    finished (message);
+                }
+            }
+
+            /**
+             * @brief Message from chat or IM to client.
+             */
+            public void WhatevToClient (ITranslatorFinished finished, string message)
+            {
+                if (langcode == null) {
+                    langcode = DEFAULT_LANGCODE;
+                }
+
+                // see if message coming from sim has a language tag on it
+                // [[[languagecode]]]
+                // if not, put the default code on it
+
+                int i = message.IndexOf ("[[[");
+                int j = message.IndexOf ("]]]");
+                if ((i > 0) || (j < 0)) {
+                    if (langcode == DEFAULT_LANGCODE) {
+                        finished (message);
+                        return;
+                    }
+                    message = "[[[" + DEFAULT_LANGCODE + "]]]" + message;
+                    j = message.IndexOf ("]]]");
+                }
+
+                // separate out the language code of the message from the rest of the message
+                string msglc = message.Substring (3, j - 3);
+                message = message.Substring (j + 3);
+
+                // if message's language matches the client's language, pass message to client as is
+                // also pass message as is if it was tagged with [[[--]]]
+                if ((msglc == NOTRANS_LANGCODE) || (msglc == langcode)) {
+                    finished (message);
+                    return;
+                }
+
+                // otherwise, start translating then pass translation to client
+                Translate (msglc, langcode, message, finished);
+            }
+
+            /**
+             * @brief Client requesting the given language code, see if it is valid.
+             */
+            private bool ValidLanguageCode (string lc)
+            {
+                return true;
+            }
+        }
+
+        /**
+         * @brief One of these per message being translated.
+         */
+        private class Translation {
+            public string srclc;
+            public string dstlc;
+            public string message;
+            public string translated;
+
+            public event ITranslatorFinished onFinished;
+            public ITranslatorFinished GetFinisheds ()
+            {
+                ITranslatorFinished finisheds = onFinished;
+                onFinished = null;
+                return finisheds;
+            }
         }
     }
 }
