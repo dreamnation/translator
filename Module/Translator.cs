@@ -51,6 +51,8 @@ namespace Dreamnation
         private static Queue<Translation> translationq = new Queue<Translation> ();
         private static string[] allLangCodes;
 
+        private Dictionary<IClientAPI,TranslatorClient> translatorClients = new Dictionary<IClientAPI,TranslatorClient> ();
+
         public void Initialise (IConfigSource config)
         {
             m_log.Info ("[Translator]: Initialise");
@@ -69,6 +71,15 @@ namespace Dreamnation
                 lcd.Add (alclo.Substring (++ i), twolet);
             }
             langcodedict = lcd;
+
+            MainConsole.Instance.Commands.AddCommand (
+                "translator",
+                false,
+                "translator",
+                "translator [...|help|...]",
+                "run translator commands",
+                ConsoleCommand
+            );
         }
 
         public void PostInitialise ()
@@ -119,6 +130,37 @@ namespace Dreamnation
         public ITranslatorClient ClientOpened (IClientAPI client)
         {
             return new TranslatorClient (this, client);
+        }
+
+        private void ConsoleCommand (string module, string[] args)
+        {
+            if (args.Length < 2) {
+                m_log.Info ("[Translator]: missing command, try 'translator help'");
+                return;
+            }
+
+            switch (args[1]) {
+                case "help": {
+                    m_log.Info ("[Translator]:  translator status     list people using the translator in this sim");
+                    break;
+                }
+                case "status": {
+                    lock (translatorClients) {
+                        int count = translatorClients.Count;
+                        m_log.Info ("[Translator]: " + count + " " + ((count == 1) ? "person" : "people") + " using translator in this sim");
+                        foreach (TranslatorClient tc in translatorClients.Values) {
+                            m_log.Info ("[Translator]:   " + tc.langcode + " : " + tc.client.Name);
+                        }
+                        m_log.Info ("[Translator]: service " + service.Name);
+                        m_log.Info ("[Translator]: thread " + (runthread ? "running" : "aborted"));
+                    }
+                    break;
+                }
+                default: {
+                    m_log.Info ("[Translator]: unknown command, try 'translator help'");
+                    break;
+                }
+            }
         }
 
         /**
@@ -230,11 +272,12 @@ namespace Dreamnation
                     string xlation;
                     try {
                         xlation = service.Translate (val.client, val.srclc, val.dstlc, val.original);
-                        if (xlation == null) throw new NullReferenceException ("result null");
+                        if (xlation == null) throw new ApplicationException ("result null");
                         xlation = xlation.Trim ();
-                        if (xlation == "") throw new NullReferenceException ("result empty");
+                        if (xlation == "") throw new ApplicationException ("result empty");
                     } catch (Exception e) {
-                        m_log.Warn ("[Translator]: failed " + val.srclc + " -> " + val.dstlc, e);
+                        m_log.Warn ("[Translator]: failed " + val.srclc + " -> " + val.dstlc + ": ", e);
+                        m_log.Info ("[Translator]: original=<" + val.original + ">");
                         xlation = null;
                     }
 
@@ -274,17 +317,26 @@ namespace Dreamnation
          * @brief One of these per client connected to the sim.
          */
         private class TranslatorClient : ITranslatorClient {
-            private IClientAPI client;
-            private string langcode;
+            public IClientAPI client;
+            public string langcode;
+            private TranslatorModule module;
 
             public TranslatorClient (TranslatorModule mod, IClientAPI cli)
             {
                 client = cli;
+                module = mod;
                 langcode = service.DefLangCode;
+                lock (module.translatorClients) {
+                    module.translatorClients[client] = this;
+                }
             }
 
             public void ClientClosed ()
-            { }
+            {
+                lock (module.translatorClients) {
+                    module.translatorClients.Remove (client);
+                }
+            }
 
             /**
              * @brief A script owned by this client is calling osTranslatorControl().
@@ -391,7 +443,7 @@ namespace Dreamnation
                 }
 
                 // if message's language matches the client's language, pass message to client as is
-                if (msglc == langcode) {
+                if ((msglc == langcode) || (message.Trim () == "")) {
                     finished (message);
                 } else {
                     // otherwise, start translating then pass translation to client
