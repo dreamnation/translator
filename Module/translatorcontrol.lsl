@@ -22,7 +22,8 @@ SetCurrentLangCode ()
     if ((llGetListLength (rets) != 1) || (llList2String (rets, 0) != "OK")) {
         llOwnerSay ("error setting language code to " + currentlangcode);
     } else {
-        llOwnerSay ("language code set to " + currentlangcode);
+        string service = llList2String (osTranslatorControl ("getservicename", [ ]), 0);
+        llOwnerSay ("language code set to " + currentlangcode + " [" + service + "]");
     }
 
     // good or bad, sync up with whatever server thinks
