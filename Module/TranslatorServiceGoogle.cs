@@ -46,7 +46,7 @@ namespace Dreamnation
                            "&ie=UTF-8&oe=UTF-8&multires=1&otf=1&pc=1&trs=1&ssel=3&tsel=6&sc=1";
             string reply = SynchronousHttpRequester.MakeRequest (
                 "POST",
-                "http://translate.google.com/translate_a/t",
+                "https://translate.google.com/translate_a/t",
                 "application/x-www-form-urlencoded",
                 query,
                 TranslatorModule.WD_TIMEOUT_MS / 2000,
@@ -72,7 +72,7 @@ namespace Dreamnation
                 if (c == '\\') {
                     c = reply[++i];
                     if (c == 'u') {
-                        c = (char) Convert.ToInt32 (reply.Substring (i + 1, 4));
+                        c = (char) Convert.ToInt32 (reply.Substring (i + 1, 4), 16);
                         i += 4;
                     }
                 }

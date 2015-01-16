@@ -39,6 +39,7 @@ namespace Dreamnation
         private const int CACHE_SECS     = 24*60*60;
         public  const int WD_TIMEOUT_MS  = 60000;
         private const int PUBLIC_CHANNEL = 0;  // from scripts
+        private const string NOTRANSLATE = "--";
 
         private static bool runthread;
         private static Dictionary<string,string> langcodedict;
@@ -61,7 +62,11 @@ namespace Dreamnation
             // make dictionary of all language codes we accept
             // accept both the two-letter name and the full name
             // map both those cases to the two-letter code
-            allLangCodes = service.AllLangCodes;
+            string[] lcs = service.AllLangCodes;
+            allLangCodes = new string[lcs.Length+1];
+            allLangCodes[0] = NOTRANSLATE + " DISABLE";
+            Array.Copy (lcs, 0, allLangCodes, 1, lcs.Length);
+
             Dictionary<string,string> lcd = new Dictionary<string,string> ();
             foreach (string alc in allLangCodes) {
                 string alclo = alc.ToLowerInvariant ();
@@ -341,7 +346,7 @@ namespace Dreamnation
             /**
              * @brief A script owned by this client is calling osTranslatorControl().
              */
-            public object[] ScriptControl (string cmd, object[] args)
+            public object[] ScriptControl (object script, string cmd, object[] args)
             {
                 int nargs = args.Length;
                 switch (cmd) {
@@ -394,15 +399,17 @@ namespace Dreamnation
                     int i = message.IndexOf ("[[[");
                     int j = message.IndexOf ("]]]");
                     if ((i == 0) && (j > 0)) {
-                        string given = message.Substring (3, j - 3);
-                        string lclo = CheckLangCode (given);
-                        if (lclo == null) {
-                            client.SendChatMessage ("unknown language code " + given,
-                                    (byte) ChatTypeEnum.Owner, Vector3.Zero, "Translator", UUID.Zero,
-                                    UUID.Zero, (byte) ChatSourceType.System, (byte) ChatAudibleLevel.Fully);
-                            message = null;  // don't pass bad message to sim
-                        } else {
-                            message = "[[[" + lclo + message.Substring (j);
+                        string given = message.Substring (3, j - 3).Trim ();
+                        if (given != NOTRANSLATE) {
+                            string lclo = CheckLangCode (given);
+                            if (lclo == null) {
+                                client.SendChatMessage ("unknown language code " + given,
+                                        (byte) ChatTypeEnum.Owner, Vector3.Zero, "Translator", UUID.Zero,
+                                        UUID.Zero, (byte) ChatSourceType.System, (byte) ChatAudibleLevel.Fully);
+                                message = null;  // don't pass bad message to sim
+                            } else {
+                                message = "[[[" + lclo + message.Substring (j);
+                            }
                         }
                     } else {
 
@@ -426,6 +433,9 @@ namespace Dreamnation
              *        in which case we assume they are the default language, then
              *        translate if client is other than the default language.
              *
+             *        We may also get messages with [[[--]]] on the front, in which
+             *        case we always pass them on without doing any translation.
+             *
              *        If scripts generate messages in other than the default language,
              *        they can be prefixed with [[[lc]]] indicating the messages'
              *        actual language.
@@ -443,7 +453,9 @@ namespace Dreamnation
                 }
 
                 // if message's language matches the client's language, pass message to client as is
-                if ((msglc == langcode) || (message.Trim () == "")) {
+                // also, no translation if message is marked notranslate or client is maked notranslate
+                // and no translation for null messages
+                if ((msglc == langcode) || (msglc == NOTRANSLATE) || (langcode == NOTRANSLATE) || (message.Trim () == "")) {
                     finished (message);
                 } else {
                     // otherwise, start translating then pass translation to client
