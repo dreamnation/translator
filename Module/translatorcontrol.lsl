@@ -32,34 +32,40 @@ SetCurrentLangCode ()
 }
 
 /**
+ * @brief Get the name part of a "twoletter name" string.
+ */
+string LangName (string twoletspname)
+{
+    integer i = llSubStringIndex (twoletspname, " ");
+    return llGetSubString (twoletspname, i + 1, -1);
+}
+
+/**
  * @brief Show a page of the language selection dialog.
  */
 ShowCodeDialogPage ()
 {
     if (codepage < 0) codepage = 0;
 
-    // maybe start out with a 'back' button
-    list buttons;
-    if (codepage > 0) buttons += "<<";
-
     // put up to 10 language names per page
     // alllangcodes has entries of '2-letter fullname' pairs
     integer codeix = codepage * 10;
     integer ncodes = llGetListLength (alllangcodes);
-    integer i;
-    for (i = 0; (i < 10) && (codeix < ncodes); i ++) {
+    
+    string b9 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string ba = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string bb = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b6 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b7 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b8 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b3 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b4 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b5 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b0 = (codepage > 0)    ? "<<" : "-";
+    string b1 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
+    string b2 = (codeix < ncodes) ? ">>" : "-";
 
-        // get an entry and strip off the 2-letter code from the front
-        string lc = llList2String (alllangcodes, codeix ++);
-        integer j = llSubStringIndex (lc, " ");
-        if (j >= 0) {
-            lc = llGetSubString (lc, ++ j, -1);
-            buttons += lc;
-        }
-    }
-
-    // maybe end up with a 'next' button
-    if (codeix < ncodes) buttons += ">>";
+    list buttons = [ b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, ba, bb ];
 
     // display the buttons
     llDialog (llGetOwner (), "Select Language", buttons, channel);
@@ -116,7 +122,7 @@ default
         } else if (message == ">>") {
             codepage ++;
             ShowCodeDialogPage ();
-        } else {
+        } else if (message != "-") {
             currentlangcode = message;
             SetCurrentLangCode ();
         }
