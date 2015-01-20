@@ -2,13 +2,41 @@
  * Works with the Translator.cs module to control the translator.
  * Provides a menu so the wearer can choose his/her language.
  * Resends the translation command when the wearer moves to new region.
+ *
+ * Copyright 2015, Kunta Kinte of www.dreamnation.net
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http: *www.gnu.org/licenses/>.
+ *
+ * v1.1 make sure listen is set up on region change
  */
  
 integer channel = -1309628754;
+string  version = "v1.1";
 
 integer codepage;
-list alllangcodes;
-string currentlangcode;
+integer numalllangcodes;
+list    alllangcodes;
+string  currentlangcode;
+
+/**
+ * @brief Get what server thinks our language code is.
+ */
+SyncUpWithServer ()
+{
+    currentlangcode = llList2String (osTranslatorControl ("getlangcode", [ ]), 0);
+    llOwnerSay ("using language " + currentlangcode);
+}
 
 /**
  * @brief Tell this sim what language we speak.
@@ -19,23 +47,21 @@ SetCurrentLangCode ()
     // it will accept either a 2-letter code
     // or the full name string
     list rets = osTranslatorControl ("setlangcode", [ currentlangcode ]);
-    if ((llGetListLength (rets) != 1) || (llList2String (rets, 0) != "OK")) {
+    if (llList2String (rets, 0) != "OK") {
         llOwnerSay ("error setting language code to " + currentlangcode);
-    } else {
-        string service = llList2String (osTranslatorControl ("getservicename", [ ]), 0);
-        llOwnerSay ("language code set to " + currentlangcode + " [" + service + "]");
     }
 
-    // good or bad, sync up with whatever server thinks
-    // this always gets the 2-letter code
-    currentlangcode = llList2String (osTranslatorControl ("getlangcode", [ ]), 0);
+    // good or bad, make sure we know what the sim thinks at this point
+    SyncUpWithServer ();
 }
 
 /**
  * @brief Get the name part of a "twoletter name" string.
  */
-string LangName (string twoletspname)
+string LangCodeButton (integer index)
 {
+    if (index >= numalllangcodes) return "-";
+    string twoletspname = llList2String (alllangcodes, index);
     integer i = llSubStringIndex (twoletspname, " ");
     return llGetSubString (twoletspname, i + 1, -1);
 }
@@ -48,22 +74,28 @@ ShowCodeDialogPage ()
     if (codepage < 0) codepage = 0;
 
     // put up to 10 language names per page
-    // alllangcodes has entries of '2-letter fullname' pairs
-    integer codeix = codepage * 10;
-    integer ncodes = llGetListLength (alllangcodes);
-    
-    string b9 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string ba = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string bb = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b6 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b7 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b8 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b3 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b4 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b5 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b0 = (codepage > 0)    ? "<<" : "-";
-    string b1 = (codeix < ncodes) ? LangName (alllangcodes[codeix++]) : "-";
-    string b2 = (codeix < ncodes) ? ">>" : "-";
+    integer index = codepage * 10;
+
+    //  [b9]  [ba]  [bb]
+    //  [b6]  [b7]  [b8]
+    //  [b3]  [b4]  [b5]
+    //  [b0]  [b1]  [b2]
+
+    string b9 = LangCodeButton (index ++);
+    string ba = LangCodeButton (index ++);
+    string bb = LangCodeButton (index ++);
+    string b6 = LangCodeButton (index ++);
+    string b7 = LangCodeButton (index ++);
+    string b8 = LangCodeButton (index ++);
+    string b3 = LangCodeButton (index ++);
+    string b4 = LangCodeButton (index ++);
+    string b5 = LangCodeButton (index ++);
+    string b0 = "HELP";
+    string b1 = LangCodeButton (index ++);
+    string b2 = "-";
+
+    if (codepage > 0) b0 = "<<";
+    if (index < numalllangcodes) b2 = ">>";
 
     list buttons = [ b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, ba, bb ];
 
@@ -76,18 +108,26 @@ default
     /**
      * @brief Script initialization.
      */
-    state_entry()
+    state_entry ()
     {
         // sync up with whatever language the server thinks we are using
-        currentlangcode = llList2String (osTranslatorControl ("getlangcode", [ ]), 0);
+        SyncUpWithServer ();
 
         // tell user there is a menu available
-        llOwnerSay ("touch to get menu");
+        llOwnerSay ("[" + version + "] touch to get menu");
+        state running;
+    }
+}
+
+state running {
+
+    state_entry ()
+    {
         llListen (channel, "", llGetOwner (), "");
     }
 
     /**
-     * @brief If we change regions, send the new sim our language code.
+     * @brief If we change regions, send the new sim our language code and re-enable listening.
      */
     changed (integer change)
     {
@@ -96,17 +136,27 @@ default
         }
         if (change & (CHANGED_REGION | CHANGED_TELEPORT | CHANGED_REGION_START)) {
             SetCurrentLangCode ();
+            state resetlistens;
         }
     }
 
     /**
-     * @brief Give the user the language selection dialog if we are touched.
+     * @brief User just logged in or object was just attached from inventory.
+     */
+    on_rez (integer start)
+    {
+        SetCurrentLangCode ();
+        state resetlistens;
+    }
+
+    /**
+     * @brief Give the user the language selection dialog if attachment is touched.
      */
     touch_start ()
     {
         if (llDetectedKey (0) == llGetOwner ()) {
             alllangcodes = osTranslatorControl ("getalllangcodes", [ ]);
-            codepage = 0;
+            numalllangcodes = llGetListLength (alllangcodes);
             ShowCodeDialogPage ();
         }
     }
@@ -116,15 +166,29 @@ default
      */
     listen (integer chan, string name, key id, string message)
     {
-        if (message == "<<") {
+        if (message == "HELP") {
+            llOwnerSay ("Go to http://wiki.dreamnation.net and click on Chat/IM Language Translator");
+        } else if (message == "<<") {
             -- codepage;
             ShowCodeDialogPage ();
         } else if (message == ">>") {
             codepage ++;
             ShowCodeDialogPage ();
-        } else if (message != "-") {
+        } else if (message == "-") {
+            ShowCodeDialogPage ();
+        } else {
             currentlangcode = message;
             SetCurrentLangCode ();
         }
+    }
+}
+
+/**
+ * @brief Temporary state to make sure we have one and only one listen.
+ */
+state resetlistens {
+    state_entry ()
+    {
+        state running;
     }
 }
