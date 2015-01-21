@@ -10,6 +10,7 @@ using OpenSim.Framework.Client;
 using OpenSim.Framework.Monitoring;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Services.Interfaces;
 
 using LSL_String = OpenSim.Region.ScriptEngine.Shared.LSL_Types.LSLString;
 
@@ -32,7 +33,7 @@ namespace Dreamnation
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "Translator")]
     public class TranslatorModule : INonSharedRegionModule, ITranslatorModule
     {
-        private static readonly ILog m_log =
+        public static readonly ILog m_log =
                 LogManager.GetLogger (MethodBase.GetCurrentMethod ().DeclaringType);
 
         private const int CACHE_CHARS    = 10000000;
@@ -53,6 +54,7 @@ namespace Dreamnation
         private static string[] allLangCodes;
 
         private Dictionary<IClientAPI,TranslatorClient> translatorClients = new Dictionary<IClientAPI,TranslatorClient> ();
+        private IGridUserService gridUserService;
 
         public void Initialise (IConfigSource config)
         {
@@ -93,6 +95,7 @@ namespace Dreamnation
         public void AddRegion (Scene scene)
         {
             scene.RegisterModuleInterface<ITranslatorModule> (this);
+            gridUserService = scene.RequestModuleInterface<IGridUserService> ();
             lock (queuelock) {
                 if (++ numregions == 1) {
                     runthread = true;
@@ -108,6 +111,7 @@ namespace Dreamnation
         public void RemoveRegion (Scene scene)
         {
             scene.UnregisterModuleInterface<ITranslatorModule> (this);
+            gridUserService = null;
             lock (queuelock) {
                 if (-- numregions == 0) {
                     runthread = false;
@@ -330,7 +334,22 @@ namespace Dreamnation
             {
                 client = cli;
                 module = mod;
-                langcode = service.DefLangCode;
+
+                /*
+                 * See if GridUser table has a LangCode for this user.
+                 * If not, assume default language until script says otherwise.
+                 */
+                GridUserInfo gui = module.gridUserService.GetGridUserInfo (client.AgentId.ToString ());
+                if (gui != null) {
+                    langcode = gui.LangCode;
+                }
+                if ((langcode == null) || (langcode == "")) {
+                    langcode = service.DefLangCode;
+                }
+
+                /*
+                 * Module wants to know what clients are instantiated.
+                 */
                 lock (module.translatorClients) {
                     module.translatorClients[client] = this;
                 }
@@ -350,9 +369,17 @@ namespace Dreamnation
             {
                 int nargs = args.Length;
                 switch (cmd) {
+
+                    /*
+                     * Get default language code.
+                     */
                     case "getdeflangcode": {
                         return new object[] { new LSL_String (service.DefLangCode) };
                     }
+
+                    /*
+                     * Get all supported language codes.
+                     */
                     case "getalllangcodes": {
                         int ncod = allLangCodes.Length;
                         object[] rets = new object[ncod];
@@ -361,17 +388,50 @@ namespace Dreamnation
                         }
                         return rets;
                     }
+
+                    /*
+                     * Get current language code.
+                     */
                     case "getlangcode": {
                         return new object[] { new LSL_String (langcode) };
                     }
+
+                    /*
+                     * Get translation service name.
+                     */
                     case "getservicename": {
                         return new object[] { new LSL_String (service.Name) };
                     }
+
+                    /*
+                     * Set current language code.
+                     */
                     case "setlangcode": {
-                        if (nargs < 1) break;
+
+                        /*
+                         * Get and validate given language code and convert to 2-letter lower case code.
+                         */
+                        if (nargs < 1) {
+                            return new object[] { new LSL_String ("missing lang code") };
+                        }
                         string lc = CheckLangCode (args[0].ToString ());
-                        if (lc != null) langcode = lc;
-                        return new object[] { new LSL_String ((lc != null) ? "OK" : "badlangcode") };
+                        if (lc == null) {
+                            return new object[] { new LSL_String ("bad lang code") };
+                        }
+
+                        /*
+                         * Try to write it to database.
+                         */
+                        if (!module.gridUserService.SetLangCode (client.AgentId.ToString (), lc)) {
+                            m_log.Error ("[Translator]: GridUser.SetLangCode (" + client.AgentId.ToString () + ", " + lc + ") failed");
+                            return new object[] { new LSL_String ("database write failed") };
+                        }
+
+                        /*
+                         * Success, save cached value and return success status.
+                         */
+                        langcode = lc;
+                        return new object[] { new LSL_String ("OK") };
                     }
                 }
                 return new object[0];
