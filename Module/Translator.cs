@@ -27,7 +27,7 @@ namespace Dreamnation
         string[] AllLangCodes { get; }
         string DefLangCode { get; }
         string Name { get; }
-        string Translate (IClientAPI client, string srclc, string dstlc, string message);
+        string Translate (string agentID, string srclc, string dstlc, string message);
     }
 
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "Translator")]
@@ -59,34 +59,6 @@ namespace Dreamnation
         public void Initialise (IConfigSource config)
         {
             m_log.Info ("[Translator]: Initialise");
-            service = new TranslatorServiceGoogle (); // TranslatorServiceMyMemory ();
-
-            // make dictionary of all language codes we accept
-            // accept both the two-letter name and the full name
-            // map both those cases to the two-letter code
-            string[] lcs = service.AllLangCodes;
-            allLangCodes = new string[lcs.Length+1];
-            allLangCodes[0] = NOTRANSLATE + " DISABLE";
-            Array.Copy (lcs, 0, allLangCodes, 1, lcs.Length);
-
-            Dictionary<string,string> lcd = new Dictionary<string,string> ();
-            foreach (string alc in allLangCodes) {
-                string alclo = alc.ToLowerInvariant ();
-                int i = alclo.IndexOf (' ');
-                string twolet = alclo.Substring (0, i);
-                lcd.Add (twolet, twolet);
-                lcd.Add (alclo.Substring (++ i), twolet);
-            }
-            langcodedict = lcd;
-
-            MainConsole.Instance.Commands.AddCommand (
-                "translator",
-                false,
-                "translator",
-                "translator [...|help|...]",
-                "run translator commands",
-                ConsoleCommand
-            );
         }
 
         public void PostInitialise ()
@@ -97,11 +69,42 @@ namespace Dreamnation
             scene.RegisterModuleInterface<ITranslatorModule> (this);
             gridUserService = scene.RequestModuleInterface<IGridUserService> ();
             lock (queuelock) {
+                if (service == null) {
+                    service = new TranslatorServiceGoogle (); // TranslatorServiceMyMemory (scene);
+
+                    // make dictionary of all language codes we accept
+                    // accept both the two-letter name and the full name
+                    // map both those cases to the two-letter code
+                    string[] lcs = service.AllLangCodes;
+                    allLangCodes = new string[lcs.Length+1];
+                    allLangCodes[0] = NOTRANSLATE + " DISABLE";
+                    Array.Copy (lcs, 0, allLangCodes, 1, lcs.Length);
+
+                    Dictionary<string,string> lcd = new Dictionary<string,string> ();
+                    foreach (string alc in allLangCodes) {
+                        string alclo = alc.ToLowerInvariant ();
+                        int i = alclo.IndexOf (' ');
+                        string twolet = alclo.Substring (0, i);
+                        lcd.Add (twolet, twolet);
+                        lcd.Add (alclo.Substring (++ i), twolet);
+                    }
+                    langcodedict = lcd;
+                }
+
                 if (++ numregions == 1) {
                     runthread = true;
                     Watchdog.StartThread (TranslatorThread, "translator", ThreadPriority.Normal,
                                           false, true, null, WD_TIMEOUT_MS);
                 }
+
+                MainConsole.Instance.Commands.AddCommand (
+                    "translator",
+                    false,
+                    "translator",
+                    "translator [...|help|...]",
+                    "run translator commands",
+                    ConsoleCommand
+                );
             }
         }
 
@@ -141,6 +144,82 @@ namespace Dreamnation
             return new TranslatorClient (this, client);
         }
 
+        /**
+         * @brief Message from chat or IM to agent, whether logged in or not.
+         */
+        public void WhatevToAgent (string agentID, ITranslatorFinished finished, string message)
+        {
+            string langcode = GetAgentLangCode (agentID);
+            WhatevToAgent (agentID, langcode, finished, message);
+        }
+
+        /**
+         * @brief Message from chat or IM to agent, whether logged in or not.
+         *
+         *        Messages should have [[[lc]]] tag on the front as inserted by
+         *        ClientToWhatev() and so we know if we need to translate the
+         *        message before passing it to the client.
+         *
+         *        We may get messages without [[[lc]]] (eg, script generated)
+         *        in which case we assume they are the default language, then
+         *        translate if client is other than the default language.
+         *
+         *        We may also get messages with [[[--]]] on the front, in which
+         *        case we always pass them on without doing any translation.
+         *
+         *        If scripts generate messages in other than the default language,
+         *        they can be prefixed with [[[lc]]] indicating the messages'
+         *        actual language.
+         *
+         * @param agentID  = agent the message is headed to
+         * @param langcode = language to translate message to
+         * @param finished = what to call when translation is complete
+         * @param message  = message to be translated, possibly with [[[lc]]]
+         *                   prefix indicating the message's language
+         */
+        private void WhatevToAgent (string agentID, string langcode, ITranslatorFinished finished, string message)
+        {
+            // split [[[langcode]]] off front of message
+            // if not there, assume it is default language
+            string msglc = service.DefLangCode;
+            int i = message.IndexOf ("[[[");
+            int j = message.IndexOf ("]]]");
+            if ((i == 0) && (j > 0)) {
+                msglc = message.Substring (3, j - 3);
+                message = message.Substring (j + 3);
+            }
+
+            // if message's language matches the agent's language, pass message to agent as is
+            // also, no translation if message is marked notranslate or agent is maked notranslate
+            // and no translation for null messages
+            if ((msglc == langcode) || (msglc == NOTRANSLATE) || (langcode == NOTRANSLATE) || (message.Trim () == "")) {
+                finished (message);
+            } else {
+                // otherwise, start translating then pass translation to agent
+                Translate (msglc, langcode, message, agentID, finished);
+            }
+        }
+
+        /**
+         * @brief See if GridUser table has a LangCode for this user.
+         *        If not, assume default language until script says otherwise.
+         */
+        private string GetAgentLangCode (string agentID)
+        {
+            string langcode = null;
+            GridUserInfo gui = gridUserService.GetGridUserInfo (agentID);
+            if (gui != null) {
+                langcode = gui.LangCode;
+            }
+            if ((langcode == null) || (langcode == "")) {
+                langcode = service.DefLangCode;
+            }
+            return langcode;
+        }
+
+        /**
+         * @brief Process console commands.
+         */
         private void ConsoleCommand (string module, string[] args)
         {
             if (args.Length < 2) {
@@ -174,6 +253,7 @@ namespace Dreamnation
 
         /**
          * @brief Validate language code and return corresponding lower-case 2-letter code.
+         *        Return null if unknown code given.
          */
         private static string CheckLangCode (string lc)
         {
@@ -186,7 +266,7 @@ namespace Dreamnation
         /**
          * @brief Start translating the message, call finished when done.
          */
-        private static void Translate (string srclc, string dstlc, string message, IClientAPI client, ITranslatorFinished finished)
+        private static void Translate (string srclc, string dstlc, string message, string agentID, ITranslatorFinished finished)
         {
             message = message.Trim ();
 
@@ -205,7 +285,7 @@ namespace Dreamnation
 
                         // no, queue the translation for processing
                         val = new Translation ();
-                        val.client = client;
+                        val.agentID = agentID;
                         val.key = key;
                         val.srclc = srclc;
                         val.dstlc = dstlc;
@@ -280,7 +360,7 @@ namespace Dreamnation
                     // do the translation (might take a few seconds)
                     string xlation;
                     try {
-                        xlation = service.Translate (val.client, val.srclc, val.dstlc, val.original);
+                        xlation = service.Translate (val.agentID, val.srclc, val.dstlc, val.original);
                         if (xlation == null) throw new ApplicationException ("result null");
                         xlation = xlation.Trim ();
                         if (xlation == "") throw new ApplicationException ("result empty");
@@ -300,7 +380,7 @@ namespace Dreamnation
                     val.xlation = xlation;
 
                     // save some memory
-                    val.client   = null;
+                    val.agentID  = null;
                     val.srclc    = null;
                     val.dstlc    = null;
                     val.original = null;
@@ -335,17 +415,7 @@ namespace Dreamnation
                 client = cli;
                 module = mod;
 
-                /*
-                 * See if GridUser table has a LangCode for this user.
-                 * If not, assume default language until script says otherwise.
-                 */
-                GridUserInfo gui = module.gridUserService.GetGridUserInfo (client.AgentId.ToString ());
-                if (gui != null) {
-                    langcode = gui.LangCode;
-                }
-                if ((langcode == null) || (langcode == "")) {
-                    langcode = service.DefLangCode;
-                }
+                langcode = module.GetAgentLangCode (client.AgentId.ToString ());
 
                 /*
                  * Module wants to know what clients are instantiated.
@@ -484,43 +554,10 @@ namespace Dreamnation
 
             /**
              * @brief Message from chat or IM to client.
-             *
-             *        Messages should have [[[lc]]] tag on the front as inserted by
-             *        ClientToWhatev() and so we know if we need to translate the
-             *        message before passing it to the client.
-             *
-             *        We may get messages without [[[lc]]] (eg, script generated)
-             *        in which case we assume they are the default language, then
-             *        translate if client is other than the default language.
-             *
-             *        We may also get messages with [[[--]]] on the front, in which
-             *        case we always pass them on without doing any translation.
-             *
-             *        If scripts generate messages in other than the default language,
-             *        they can be prefixed with [[[lc]]] indicating the messages'
-             *        actual language.
              */
             public void WhatevToClient (ITranslatorFinished finished, string message)
             {
-                // split [[[langcode]]] off front of message
-                // if not there, assume it is default language
-                string msglc = service.DefLangCode;
-                int i = message.IndexOf ("[[[");
-                int j = message.IndexOf ("]]]");
-                if ((i == 0) && (j > 0)) {
-                    msglc = message.Substring (3, j - 3);
-                    message = message.Substring (j + 3);
-                }
-
-                // if message's language matches the client's language, pass message to client as is
-                // also, no translation if message is marked notranslate or client is maked notranslate
-                // and no translation for null messages
-                if ((msglc == langcode) || (msglc == NOTRANSLATE) || (langcode == NOTRANSLATE) || (message.Trim () == "")) {
-                    finished (message);
-                } else {
-                    // otherwise, start translating then pass translation to client
-                    Translate (msglc, langcode, message, client, finished);
-                }
+                module.WhatevToAgent (client.AgentId.ToString (), langcode, finished, message);
             }
         }
 
@@ -530,7 +567,7 @@ namespace Dreamnation
         private class Translation {
             public DateTime lastuse;                      // last time this translation used
             public event ITranslatorFinished onFinished;  // waiting for translation complete
-            public IClientAPI client;                     // null after translation complete
+            public string agentID;                        // null after translation complete
             public LinkedListNode<Translation> uselink;   // link for oldtranslations linked list
             public string key;                            // key used in translation dictionary
             public string srclc;                          // null after translation complete

@@ -38,7 +38,7 @@ namespace Dreamnation
          * @brief Translate a message.
          * https://github.com/Stichoza/google-translate-php/blob/master/src/Stichoza/Google/GoogleTranslate.php
          */
-        public string Translate (IClientAPI client, string srclc, string dstlc, string message)
+        public string Translate (string agentID, string srclc, string dstlc, string message)
         {
             string query = "client=t&text=" + HttpUtility.UrlEncode (message) +
                            "&hl=en&sl=" + HttpUtility.UrlEncode (srclc) +

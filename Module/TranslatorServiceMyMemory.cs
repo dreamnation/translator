@@ -1,4 +1,5 @@
 
+using OpenMetaverse;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 
@@ -37,17 +38,21 @@ namespace Dreamnation
         public string Name { get { return "MyMemory"; } }
 
         private IUserAccountService userAccountService;
+        private UUID regionScopeID;
+
+        public TranslatorServiceMyMemory (IScene scene)
+        {
+            userAccountService = scene.RequestModuleInterface<IUserAccountService> ();
+            regionScopeID = scene.RegionInfo.ScopeID;
+        }
 
         /**
          * @brief Translate a message.
          * http://mymemory.translated.net/doc/spec.php
          */
-        public string Translate (IClientAPI client, string srclc, string dstlc, string message)
+        public string Translate (string agentID, string srclc, string dstlc, string message)
         {
-            if (userAccountService == null) {
-                userAccountService = client.Scene.RequestModuleInterface<IUserAccountService> ();
-            }
-            string email = userAccountService.GetUserAccount (client.Scene.RegionInfo.ScopeID, client.AgentId).Email;
+            string email = userAccountService.GetUserAccount (regionScopeID, new UUID (agentID)).Email;
             string query = "q=" + HttpUtility.UrlEncode (message) +
                            "&langpair=" + HttpUtility.UrlEncode (srclc) + "|" + HttpUtility.UrlEncode (dstlc) +
                            "&de=" + HttpUtility.UrlEncode (email);
