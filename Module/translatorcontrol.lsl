@@ -19,13 +19,15 @@
  *  along with this program.  If not, see <http: *www.gnu.org/licenses/>.
  *
  * v1.1 make sure listen is set up on region change
+ * v1.2 show/hide original text option
  */
  
 integer channel = -1309628754;
-string  version = "v1.1";
+string  version = "v1.2";
 
 integer codepage;
 integer numalllangcodes;
+integer currentshoworig;
 list    alllangcodes;
 string  currentlangcode;
 
@@ -34,8 +36,11 @@ string  currentlangcode;
  */
 SyncUpWithServer ()
 {
-    currentlangcode = llList2String (osTranslatorControl ("getlangcode", [ ]), 0);
-    llOwnerSay ("using language " + currentlangcode);
+    currentlangcode = llList2String  (osTranslatorControl ("getlangcode", [ ]), 0);
+    currentshoworig = llList2Integer (osTranslatorControl ("getshoworig", [ ]), 0);
+    string sho = "hide";
+    if (currentshoworig) sho = "show";
+    llOwnerSay ("using language " + currentlangcode + " (" + sho + " original)");
 }
 
 /**
@@ -49,6 +54,13 @@ SetCurrentLangCode ()
     list rets = osTranslatorControl ("setlangcode", [ currentlangcode ]);
     if (llList2String (rets, 0) != "OK") {
         llOwnerSay ("error setting language code to " + currentlangcode);
+    }
+
+    // pass it whatever is in currentshoworig
+    // it will accept either 0 or 1
+    rets = osTranslatorControl ("setshoworig", [ currentshoworig ]);
+    if (llList2String (rets, 0) != "OK") {
+        llOwnerSay ("error setting show original to " + currentshoworig);
     }
 
     // good or bad, make sure we know what the sim thinks at this point
@@ -73,8 +85,15 @@ ShowCodeDialogPage ()
 {
     if (codepage < 0) codepage = 0;
 
+    // page 0 is special
+    if (codepage == 0) {
+        list buttons = [ "-", "-", ">>", "-", "-", "-", "-", "HELP", "-", "HideOriginal", "-", "ShowOriginal" ];
+        llDialog (llGetOwner (), "Select Language", buttons, channel);
+        return;
+    }
+
     // put up to 10 language names per page
-    integer index = codepage * 10;
+    integer index = (codepage - 1) * 10;
 
     //  [b9]  [ba]  [bb]
     //  [b6]  [b7]  [b8]
@@ -90,11 +109,10 @@ ShowCodeDialogPage ()
     string b3 = LangCodeButton (index ++);
     string b4 = LangCodeButton (index ++);
     string b5 = LangCodeButton (index ++);
-    string b0 = "HELP";
+    string b0 = "<<";
     string b1 = LangCodeButton (index ++);
     string b2 = "-";
 
-    if (codepage > 0) b0 = "<<";
     if (index < numalllangcodes) b2 = ">>";
 
     list buttons = [ b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, ba, bb ];
@@ -176,6 +194,12 @@ state running {
             ShowCodeDialogPage ();
         } else if (message == "-") {
             ShowCodeDialogPage ();
+        } else if (message == "HideOriginal") {
+            currentshoworig = FALSE;
+            SetCurrentLangCode ();
+        } else if (message == "ShowOriginal") {
+            currentshoworig = TRUE;
+            SetCurrentLangCode ();
         } else {
             currentlangcode = message;
             SetCurrentLangCode ();

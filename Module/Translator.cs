@@ -12,7 +12,8 @@ using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
 
-using LSL_String = OpenSim.Region.ScriptEngine.Shared.LSL_Types.LSLString;
+using LSL_Integer = OpenSim.Region.ScriptEngine.Shared.LSL_Types.LSLInteger;
+using LSL_String  = OpenSim.Region.ScriptEngine.Shared.LSL_Types.LSLString;
 
 using System;
 using System.Collections.Generic;
@@ -23,6 +24,12 @@ using System.Threading;
 [assembly: AddinDependency ("OpenSim", "0.5")]
 namespace Dreamnation
 {
+    public class TranslatorFinished {
+        public TranslatorFinished nextfin;
+        public bool showorig;
+        public ITranslatorFinished finished;
+    }
+
     public interface ITranslatorService {
         string[] AllLangCodes { get; }
         string DefLangCode { get; }
@@ -149,8 +156,9 @@ namespace Dreamnation
          */
         public void WhatevToAgent (string agentID, ITranslatorFinished finished, string message)
         {
-            string langcode = GetAgentLangCode (agentID);
-            WhatevToAgent (agentID, langcode, finished, message);
+            bool   showorig;
+            string langcode = GetAgentLangCode (agentID, out showorig);
+            WhatevToAgent (agentID, langcode, showorig, finished, message);
         }
 
         /**
@@ -173,11 +181,12 @@ namespace Dreamnation
          *
          * @param agentID  = agent the message is headed to
          * @param langcode = language to translate message to
+         * @param showorig = show original text
          * @param finished = what to call when translation is complete
          * @param message  = message to be translated, possibly with [[[lc]]]
          *                   prefix indicating the message's language
          */
-        private void WhatevToAgent (string agentID, string langcode, ITranslatorFinished finished, string message)
+        private void WhatevToAgent (string agentID, string langcode, bool showorig, ITranslatorFinished finished, string message)
         {
             // split [[[langcode]]] off front of message
             // if not there, assume it is default language
@@ -196,7 +205,7 @@ namespace Dreamnation
                 finished (message);
             } else {
                 // otherwise, start translating then pass translation to agent
-                Translate (msglc, langcode, message, agentID, finished);
+                Translate (msglc, langcode, showorig, message, agentID, finished);
             }
         }
 
@@ -204,7 +213,7 @@ namespace Dreamnation
          * @brief See if GridUser table has a LangCode for this user.
          *        If not, assume default language until script says otherwise.
          */
-        private string GetAgentLangCode (string agentID)
+        private string GetAgentLangCode (string agentID, out bool showorig)
         {
             string langcode = null;
             GridUserInfo gui = gridUserService.GetGridUserInfo (agentID);
@@ -213,6 +222,10 @@ namespace Dreamnation
             }
             if ((langcode == null) || (langcode == "")) {
                 langcode = service.DefLangCode;
+            }
+            showorig = langcode.EndsWith ("+");
+            if (showorig) {
+                langcode = langcode.Substring (langcode.Length - 1);
             }
             return langcode;
         }
@@ -266,7 +279,7 @@ namespace Dreamnation
         /**
          * @brief Start translating the message, call finished when done.
          */
-        private static void Translate (string srclc, string dstlc, string message, string agentID, ITranslatorFinished finished)
+        private static void Translate (string srclc, string dstlc, bool showorig, string message, string agentID, ITranslatorFinished finished)
         {
             message = message.Trim ();
 
@@ -287,9 +300,6 @@ namespace Dreamnation
                         val = new Translation ();
                         val.agentID = agentID;
                         val.key = key;
-                        val.srclc = srclc;
-                        val.dstlc = dstlc;
-                        val.original = message;
                         translations[key] = val;
                         translationq.Enqueue (val);
                         numcachedchars += key.Length;
@@ -303,17 +313,23 @@ namespace Dreamnation
                     // if translation in progress, queue 'finished' for processing when done
                     xlation = val.xlation;
                     if (xlation == null) {
-                        val.onFinished += finished;
+                        TranslatorFinished tf = new TranslatorFinished ();
+                        tf.nextfin  = val.onFinished;
+                        tf.finished = finished;
+                        tf.showorig = showorig;
+                        val.onFinished = tf;
                     }
                 } else {
 
                     // translation thread not running (crashed or whatever)
                     xlation = "[[[" + srclc + "]]]" + message;
+                    showorig = false;
                 }
             }
 
             // if translation completed, call finished right now
             if (xlation != null) {
+                if (showorig) xlation += "\n[[[" + srclc + "]]]" + message;
                 finished (xlation);
             }
         }
@@ -355,50 +371,58 @@ namespace Dreamnation
                         continue;
                     }
                     val = translationq.Dequeue ();
-                    Monitor.Exit (queuelock);
 
                     // do the translation (might take a few seconds)
-                    string xlation;
+                    string incorig, xlation;
+                    Monitor.Exit (queuelock);
                     try {
-                        xlation = service.Translate (val.agentID, val.srclc, val.dstlc, val.original);
-                        if (xlation == null) throw new ApplicationException ("result null");
-                        xlation = xlation.Trim ();
-                        if (xlation == "") throw new ApplicationException ("result empty");
-                    } catch (Exception e) {
-                        m_log.Warn ("[Translator]: failed " + val.srclc + " -> " + val.dstlc + ": ", e);
-                        m_log.Info ("[Translator]: original=<" + val.original + ">");
-                        xlation = null;
-                    }
+                        try {
+                            xlation = service.Translate (val.agentID, val.srclc, val.dstlc, val.original);
+                            if (xlation == null) throw new ApplicationException ("result null");
+                            xlation = xlation.Trim ();
+                            if (xlation == "") throw new ApplicationException ("result empty");
+                        } catch (Exception e) {
+                            m_log.Warn ("[Translator]: failed " + val.srclc + " -> " + val.dstlc + ": ", e);
+                            m_log.Info ("[Translator]: original=<" + val.original + ">");
+                            xlation = null;
+                        }
 
-                    // original text with language code if translation failed
-                    if (xlation == null) {
-                        xlation = "[[[" + val.srclc + "]]]" + val.original;
+                        // original text with language code if translation failed
+                        incorig = "[[[" + val.srclc + "]]]" + val.original;
+                        if (xlation == null) {
+                            xlation = incorig;
+                        } else {
+                            incorig = xlation + "\n" + incorig;
+                        }
+                    } finally {
+                        Monitor.Enter (queuelock);
                     }
 
                     // mark entry in translations dictionary as completed
-                    Monitor.Enter (queuelock);
                     val.xlation = xlation;
-
-                    // save some memory
-                    val.agentID  = null;
-                    val.srclc    = null;
-                    val.dstlc    = null;
-                    val.original = null;
+                    val.agentID = null;
 
                     // see if anything was waiting for the translation to complete
-                    // if so, clear out the list and call them while unlocked
-                    ITranslatorFinished finisheds = val.GetFinisheds ();
-                    if (finisheds != null) {
+                    // if so, clear out the list and call them whilst unlocked
+                    TranslatorFinished tfs = val.onFinished;
+                    if (tfs != null) {
+                        val.onFinished = null;
                         Monitor.Exit (queuelock);
-                        finisheds (xlation);
-                        Monitor.Enter (queuelock);
+                        try {
+                            do {
+                                tfs.finished (tfs.showorig ? incorig : xlation);
+                                tfs = tfs.nextfin;
+                            } while (tfs != null);
+                        } finally {
+                            Monitor.Enter (queuelock);
+                        }
                     }
                 }
             } catch (Exception e) {
                 m_log.Error ("[Translator]: Error in translator thread", e);
             } finally {
                 runthread = false;
-                try { Monitor.Exit (queuelock); } catch { }
+                Monitor.Exit (queuelock);
             }
         }
 
@@ -406,8 +430,9 @@ namespace Dreamnation
          * @brief One of these per client connected to the sim.
          */
         private class TranslatorClient : ITranslatorClient {
-            public IClientAPI client;
-            public string langcode;
+            private bool             showorig;
+            public  IClientAPI       client;
+            public  string           langcode;
             private TranslatorModule module;
 
             public TranslatorClient (TranslatorModule mod, IClientAPI cli)
@@ -415,7 +440,7 @@ namespace Dreamnation
                 client = cli;
                 module = mod;
 
-                langcode = module.GetAgentLangCode (client.AgentId.ToString ());
+                langcode = module.GetAgentLangCode (client.AgentId.ToString (), out showorig);
 
                 /*
                  * Module wants to know what clients are instantiated.
@@ -441,13 +466,6 @@ namespace Dreamnation
                 switch (cmd) {
 
                     /*
-                     * Get default language code.
-                     */
-                    case "getdeflangcode": {
-                        return new object[] { new LSL_String (service.DefLangCode) };
-                    }
-
-                    /*
                      * Get all supported language codes.
                      */
                     case "getalllangcodes": {
@@ -457,6 +475,13 @@ namespace Dreamnation
                             rets[i] = new LSL_String (allLangCodes[i]);
                         }
                         return rets;
+                    }
+
+                    /*
+                     * Get default language code.
+                     */
+                    case "getdeflangcode": {
+                        return new object[] { new LSL_String (service.DefLangCode) };
                     }
 
                     /*
@@ -471,6 +496,13 @@ namespace Dreamnation
                      */
                     case "getservicename": {
                         return new object[] { new LSL_String (service.Name) };
+                    }
+
+                    /*
+                     * Get current show original setting.
+                     */
+                    case "getshoworig": {
+                        return new object[] { new LSL_Integer (showorig ? 1 : 0) };
                     }
 
                     /*
@@ -491,9 +523,12 @@ namespace Dreamnation
 
                         /*
                          * Try to write it to database.
+                         * Include trailing '+' iff 'show originals' mode enabled.
                          */
-                        if (!module.gridUserService.SetLangCode (client.AgentId.ToString (), lc)) {
-                            m_log.Error ("[Translator]: GridUser.SetLangCode (" + client.AgentId.ToString () + ", " + lc + ") failed");
+                        string lcplus = lc;
+                        if (showorig) lcplus += "+";
+                        if (!module.gridUserService.SetLangCode (client.AgentId.ToString (), lcplus)) {
+                            m_log.Error ("[Translator]: GridUser.SetLangCode (" + client.AgentId.ToString () + ", " + lcplus + ") failed");
                             return new object[] { new LSL_String ("database write failed") };
                         }
 
@@ -501,6 +536,39 @@ namespace Dreamnation
                          * Success, save cached value and return success status.
                          */
                         langcode = lc;
+                        return new object[] { new LSL_String ("OK") };
+                    }
+
+                    /*
+                     * Set current show original setting.
+                     */
+                    case "setshoworig": {
+
+                        /*
+                         * Get and validate given setting, should be 0 or 1.
+                         */
+                        if (nargs < 1) {
+                            return new object[] { new LSL_String ("missing setting") };
+                        }
+                        int setting;
+                        if (!int.TryParse (args[0].ToString (), out setting) || (setting < 0) || (setting > 1)) {
+                            return new object[] { new LSL_String ("bad setting") };
+                        }
+
+                        /*
+                         * Try to write it to database.
+                         */
+                        string lcplus = langcode;
+                        if (setting != 0) lcplus += "+";
+                        if (!module.gridUserService.SetLangCode (client.AgentId.ToString (), lcplus)) {
+                            m_log.Error ("[Translator]: GridUser.SetShowOrig (" + client.AgentId.ToString () + ", " + lcplus + ") failed");
+                            return new object[] { new LSL_String ("database write failed") };
+                        }
+
+                        /*
+                         * Success, save cached value and return success status.
+                         */
+                        showorig = setting != 0;
                         return new object[] { new LSL_String ("OK") };
                     }
                 }
@@ -557,7 +625,7 @@ namespace Dreamnation
              */
             public void WhatevToClient (ITranslatorFinished finished, string message)
             {
-                module.WhatevToAgent (client.AgentId.ToString (), langcode, finished, message);
+                module.WhatevToAgent (client.AgentId.ToString (), langcode, showorig, finished, message);
             }
         }
 
@@ -565,26 +633,42 @@ namespace Dreamnation
          * @brief One of these per message being translated.
          */
         private class Translation {
-            public DateTime lastuse;                      // last time this translation used
-            public event ITranslatorFinished onFinished;  // waiting for translation complete
-            public string agentID;                        // null after translation complete
-            public LinkedListNode<Translation> uselink;   // link for oldtranslations linked list
-            public string key;                            // key used in translation dictionary
-            public string srclc;                          // null after translation complete
-            public string dstlc;                          // null after translation complete
-            public string original;                       // null after translation complete
-            public string xlation;                        // null before translation complete
+            public DateTime lastuse;                     // last time this translation used
+            public TranslatorFinished onFinished;        // waiting for translation complete
+            public string agentID;                       // null after translation complete
+            public LinkedListNode<Translation> uselink;  // link for oldtranslations linked list
+            public string key;                           // key used in translation dictionary
+            public string xlation;                       // null before translation complete
+
+            public string srclc
+            {
+                get {
+                    int i = key.IndexOf (':');
+                    return key.Substring (0, i);
+                }
+            }
+
+            public string dstlc
+            {
+                get {
+                    int i = key.IndexOf (':');
+                    int j = key.IndexOf (':', ++ i);
+                    return key.Substring (i, j - i);
+                }
+            }
+
+            public string original
+            {
+                get {
+                    int i = key.IndexOf (':');
+                    int j = key.IndexOf (':', ++ i);
+                    return key.Substring (++ j);
+                }
+            }
 
             public Translation ()
             {
                 uselink = new LinkedListNode<Translation> (this);
-            }
-
-            public ITranslatorFinished GetFinisheds ()
-            {
-                ITranslatorFinished finisheds = onFinished;
-                onFinished = null;
-                return finisheds;
             }
         }
     }
