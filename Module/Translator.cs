@@ -225,7 +225,7 @@ namespace Dreamnation
             }
             showorig = langcode.EndsWith ("+");
             if (showorig) {
-                langcode = langcode.Substring (langcode.Length - 1);
+                langcode = langcode.Substring (0, langcode.Length - 1);
             }
             return langcode;
         }
@@ -561,7 +561,7 @@ namespace Dreamnation
                         string lcplus = langcode;
                         if (setting != 0) lcplus += "+";
                         if (!module.gridUserService.SetLangCode (client.AgentId.ToString (), lcplus)) {
-                            m_log.Error ("[Translator]: GridUser.SetShowOrig (" + client.AgentId.ToString () + ", " + lcplus + ") failed");
+                            m_log.Error ("[Translator]: GridUser.SetLangCode (" + client.AgentId.ToString () + ", " + lcplus + ") failed");
                             return new object[] { new LSL_String ("database write failed") };
                         }
 
