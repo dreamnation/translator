@@ -20,10 +20,12 @@
  *
  * v1.1 make sure listen is set up on region change
  * v1.2 show/hide original text option
+ * v1.3 setting is saved in grid-wide database now,
+ *      no need to reset every region change
  */
  
 integer channel = -1309628754;
-string  version = "v1.2";
+string  version = "v1.3";
 
 integer codepage;
 integer numalllangcodes;
@@ -44,7 +46,7 @@ SyncUpWithServer ()
 }
 
 /**
- * @brief Tell this sim what language we speak.
+ * @brief Write language code and show origin option to grid-wide database
  */
 SetCurrentLangCode ()
 {
@@ -145,16 +147,12 @@ state running {
     }
 
     /**
-     * @brief If we change regions, send the new sim our language code and re-enable listening.
+     * @brief If we change owner, reset everything.
      */
     changed (integer change)
     {
         if (change & CHANGED_OWNER) {
             llResetScript ();
-        }
-        if (change & (CHANGED_REGION | CHANGED_TELEPORT | CHANGED_REGION_START)) {
-            SetCurrentLangCode ();
-            state resetlistens;
         }
     }
 
@@ -163,8 +161,7 @@ state running {
      */
     on_rez (integer start)
     {
-        SetCurrentLangCode ();
-        state resetlistens;
+        llResetScript ();
     }
 
     /**
