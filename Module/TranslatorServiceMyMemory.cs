@@ -56,10 +56,9 @@ namespace Dreamnation
             string query = "q=" + HttpUtility.UrlEncode (message) +
                            "&langpair=" + HttpUtility.UrlEncode (srclc) + "|" + HttpUtility.UrlEncode (dstlc) +
                            "&de=" + HttpUtility.UrlEncode (email);
-            string reply = SynchronousHttpRequester.MakeRequest (
+            string reply = SynchronousRestFormsRequester.MakeRequest (
                 "POST",
                 "http://api.mymemory.translated.net/get",
-                "application/x-www-form-urlencoded",
                 query,
                 TranslatorModule.WD_TIMEOUT_MS / 2000,
                 null

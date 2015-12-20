@@ -20,8 +20,8 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 
-[assembly: Addin ("TranslatorModule", "0.1")]
-[assembly: AddinDependency ("OpenSim", "0.5")]
+[assembly: Addin ("TranslatorModule", OpenSim.VersionInfo.VersionNumber)]
+[assembly: AddinDependency ("OpenSim.Region.Framework", OpenSim.VersionInfo.VersionNumber)]
 namespace Dreamnation
 {
     public class TranslatorFinished {
@@ -100,8 +100,14 @@ namespace Dreamnation
 
                 if (++ numregions == 1) {
                     runthread = true;
-                    Watchdog.StartThread (TranslatorThread, "translator", ThreadPriority.Normal,
-                                          false, true, null, WD_TIMEOUT_MS);
+                    Thread thread = new Thread (TranslatorThread);
+                    thread.Name = "translator";
+                    thread.Priority = ThreadPriority.Normal;
+
+                    Watchdog.ThreadWatchdogInfo info = new Watchdog.ThreadWatchdogInfo (thread, WD_TIMEOUT_MS, thread.Name);
+                    Watchdog.AddThread (info, thread.Name, true);
+
+                    thread.Start ();
                 }
 
                 MainConsole.Instance.Commands.AddCommand (
@@ -423,6 +429,7 @@ namespace Dreamnation
             } finally {
                 runthread = false;
                 Monitor.Exit (queuelock);
+                Watchdog.RemoveThread (true);
             }
         }
 

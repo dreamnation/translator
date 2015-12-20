@@ -44,10 +44,9 @@ namespace Dreamnation
                            "&hl=en&sl=" + HttpUtility.UrlEncode (srclc) +
                            "&tl=" + HttpUtility.UrlEncode (dstlc) +
                            "&ie=UTF-8&oe=UTF-8&multires=1&otf=1&pc=1&trs=1&ssel=3&tsel=6&sc=1";
-            string reply = SynchronousHttpRequester.MakeRequest (
+            string reply = SynchronousRestFormsRequester.MakeRequest (
                 "POST",
                 "http://translate.google.com/translate_a/t",
-                "application/x-www-form-urlencoded",
                 query,
                 TranslatorModule.WD_TIMEOUT_MS / 2000,
                 null
