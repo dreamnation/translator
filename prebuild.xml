@@ -11,7 +11,6 @@
     </Configuration>
 
     <ReferencePath>../../../bin/</ReferencePath>
-    <Reference name="hdfsdll"/>
     <Reference name="log4net"/>
     <Reference name="Mono.Addins"/>
     <Reference name="MySql.Data"/>
